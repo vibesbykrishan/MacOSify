@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 PROJECT="MacOSify"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/macosify"
 BACKUP_DIR="$STATE_DIR/backups"
@@ -30,7 +30,7 @@ Usage: macosify.sh [options]
   --dry-run                 Preview changes only
   --safe-mode               Conservative configuration
   --performance MODE        auto|low|balanced|quality
-  --preset NAME             auto|sonoma|ventura|monterey|bigsur
+  --preset NAME             auto|tahoe|sonoma|ventura|monterey|bigsur
   --repair                  Re-apply MacOSify configuration
   --update                  Update MacOSify sources
   --rollback                Restore latest backup
@@ -106,14 +106,14 @@ backup(){
 
 install_packages(){
   info "Installing build/runtime dependencies"
-  local packages=(git curl ca-certificates unzip sassc libglib2.0-dev libxml2-utils)
+  local packages=(git curl ca-certificates unzip sassc meson ninja-build gettext build-essential libglib2.0-dev libxml2-utils dconf-cli)
   if ! command -v gnome-extensions >/dev/null 2>&1; then packages+=(gnome-shell-extension-prefs); fi
   run sudo apt-get update
   run sudo apt-get install -y "${packages[@]}"
 }
 
 sync_repo(){
-  local name="$1" url="https://github.com/vinceliuice/$1.git"
+  local name="$1" url="$2"
   run mkdir -p "$SOURCE_DIR"
   ((DRY_RUN)) && return
   if [[ -d "$SOURCE_DIR/$name/.git" ]]; then
@@ -125,33 +125,59 @@ sync_repo(){
 }
 
 sync_sources(){
-  info "Syncing maintained WhiteSur sources"
-  sync_repo WhiteSur-gtk-theme
-  sync_repo WhiteSur-icon-theme
-  sync_repo WhiteSur-cursors
-  sync_repo WhiteSur-wallpapers
+  info "Syncing latest maintained Tahoe sources"
+  sync_repo MacTahoe-gtk-theme https://github.com/vinceliuice/MacTahoe-gtk-theme.git
+  sync_repo MacTahoe-icon-theme https://github.com/vinceliuice/MacTahoe-icon-theme.git
+  sync_repo dash-to-dock https://github.com/micheleg/dash-to-dock.git
+  sync_repo blur-my-shell https://github.com/aunetx/blur-my-shell.git
+  sync_repo gnome-shell-extension-appindicator https://github.com/ubuntu/gnome-shell-extension-appindicator.git
 }
 
-install_whitesur(){
-  ((DRY_RUN)) && { info "Would install WhiteSur GTK/icons/cursors/wallpapers"; return; }
-  local gtk="$SOURCE_DIR/WhiteSur-gtk-theme"
-  info "Installing WhiteSur GTK theme"
-  bash "$gtk/install.sh" -c light -c dark -o normal -t all -a normal
-  info "Installing WhiteSur icons"
-  bash "$SOURCE_DIR/WhiteSur-icon-theme/install.sh" -a
-  info "Installing WhiteSur cursors"
-  bash "$SOURCE_DIR/WhiteSur-cursors/install.sh" -a
-  info "Installing WhiteSur wallpapers"
-  bash "$SOURCE_DIR/WhiteSur-wallpapers/install.sh" || warn "Wallpaper installer returned non-zero; continuing."
+install_tahoe(){
+  ((DRY_RUN)) && { info "Would install latest MacTahoe GTK/icons/cursors"; return; }
+  local gtk="$SOURCE_DIR/MacTahoe-gtk-theme"
+  info "Installing latest MacTahoe GTK theme"
+  bash "$gtk/install.sh" -c light -c dark -t all -o normal -b -l || bash "$gtk/install.sh" -c light -c dark -t all -o normal
+  info "Installing latest MacTahoe icons and cursors"
+  bash "$SOURCE_DIR/MacTahoe-icon-theme/install.sh" -t all
+}
+
+install_extension(){
+  local dir="$1"
+  if ((DRY_RUN)); then info "Would install GNOME extension: $dir"; return; fi
+  if [[ -f "$dir/Makefile" ]]; then make -C "$dir" install
+  elif [[ -x "$dir/install.sh" ]]; then "$dir/install.sh"
+  else warn "No supported installer found for $dir"; fi
+}
+
+install_extensions(){
+  ((SAFE_MODE)) && { info "Safe mode: skipping third-party GNOME extensions"; return; }
+  install_extension "$SOURCE_DIR/dash-to-dock"
+  install_extension "$SOURCE_DIR/blur-my-shell"
+  if [[ -f "$SOURCE_DIR/gnome-shell-extension-appindicator/meson.build" ]]; then
+    if ((DRY_RUN)); then info "Would build/install latest AppIndicator extension"
+    else
+      local build="$STATE_DIR/appindicator-build"
+      rm -rf "$build"
+      meson setup "$build" "$SOURCE_DIR/gnome-shell-extension-appindicator"
+      ninja -C "$build" install
+    fi
+  fi
 }
 
 configure_interface(){
   ((DRY_RUN)) && return
-  gsettings set org.gnome.desktop.interface gtk-theme 'WhiteSur-Light' 2>/dev/null || true
-  gsettings set org.gnome.desktop.interface icon-theme 'WhiteSur' 2>/dev/null || true
-  gsettings set org.gnome.desktop.interface cursor-theme 'WhiteSur-cursors' 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface gtk-theme 'MacTahoe-light' 2>/dev/null || gsettings set org.gnome.desktop.interface gtk-theme 'MacTahoe-Light' 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface icon-theme 'MacTahoe' 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface cursor-theme 'MacTahoe-cursors' 2>/dev/null || true
   gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:' 2>/dev/null || true
   gsettings set org.gnome.desktop.interface color-scheme 'prefer-light' 2>/dev/null || true
+}
+
+configure_extensions(){
+  ((DRY_RUN || SAFE_MODE)) && return
+  local ids=(dash-to-dock@micxgx.gmail.com blur-my-shell@aunetx appindicatorsupport@rgcjonas.gmail.com)
+  for id in "${ids[@]}"; do gnome-extensions enable "$id" 2>/dev/null || warn "Extension unavailable/incompatible: $id"; done
 }
 
 configure_dock(){
@@ -187,7 +213,7 @@ configure_performance(){
 
 configure_preset(){
   case "$PRESET" in
-    auto|sonoma|ventura|monterey|bigsur) ;;
+    auto|tahoe|sonoma|ventura|monterey|bigsur) ;;
     *) die "Unknown preset: $PRESET";;
   esac
   info "Applying preset: $PRESET"
@@ -238,8 +264,10 @@ main(){
       backup
       install_packages
       sync_sources
-      install_whitesur
+      install_tahoe
+      install_extensions
       configure_preset
+      configure_extensions
       verify
       ;;
     *) die "Invalid action: $ACTION";;

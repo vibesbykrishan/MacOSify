@@ -1,0 +1,18 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local test artifacts
+build/
+dist/
+coverage/
+logs/
+backups/
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example

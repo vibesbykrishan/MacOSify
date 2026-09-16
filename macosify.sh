@@ -137,7 +137,7 @@ install_tahoe(){
   ((DRY_RUN)) && { info "Would install latest MacTahoe GTK/icons/cursors"; return; }
   local gtk="$SOURCE_DIR/MacTahoe-gtk-theme"
   info "Installing latest MacTahoe GTK theme"
-  bash "$gtk/install.sh" -c light -c dark -t all -o normal -b -l || bash "$gtk/install.sh" -c light -c dark -t all -o normal
+  bash "$gtk/install.sh" -c light -c dark -t all -o normal -b -l --shell -p 15 -h 32 normal --round || bash "$gtk/install.sh" -c light -c dark -t all -o normal
   info "Installing latest MacTahoe icons and cursors"
   bash "$SOURCE_DIR/MacTahoe-icon-theme/install.sh" -t all
 }

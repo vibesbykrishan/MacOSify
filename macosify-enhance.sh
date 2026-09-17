@@ -66,7 +66,8 @@ install_appmenu(){
   fi
   bash "$app_dir/install.sh" --clean-stale
   persist 'appmenu@ChathurangaBW.github.io'
-  local schema="$app_dir/schemas"
+  # Use the installed/compiled schema, not the source tree's uncompiled XML.
+  local schema="$HOME/.local/share/gnome-shell/extensions/appmenu@ChathurangaBW.github.io/schemas"
   set_schema "$schema" org.gnome.shell.extensions.appmenu show-os-icon true
   set_schema "$schema" org.gnome.shell.extensions.appmenu use-real-menus true
   set_schema "$schema" org.gnome.shell.extensions.appmenu prefer-macos-style true
@@ -114,6 +115,7 @@ configure_control_center(){
 
 configure_machine(){
   local mem_mb cores cpu gpu profile session desktop
+  . /etc/os-release 2>/dev/null || true
   mem_mb="$(awk '/MemTotal/{printf "%d",$2/1024}' /proc/meminfo)"
   cores="$(nproc 2>/dev/null || echo 1)"
   cpu="$(lscpu 2>/dev/null | awk -F: '/Model name/{gsub(/^ +| +$/,"",$2); print $2; exit}')"

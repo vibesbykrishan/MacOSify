@@ -37,3 +37,6 @@ fi
 if [[ -f "$TMP/MacOSify/macosify-finalize.sh" ]]; then
   bash "$TMP/MacOSify/macosify-finalize.sh"
 fi
+if [[ -f "$TMP/MacOSify/macosify-boot-theme.sh" ]]; then
+  bash "$TMP/MacOSify/macosify-boot-theme.sh"
+fi

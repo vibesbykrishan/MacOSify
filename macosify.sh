@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 PROJECT="MacOSify"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/macosify"
 SOURCE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/macosify/sources"
@@ -23,7 +23,7 @@ warn(){ printf '[MacOSify][WARN] %s\n' "$*" >&2; }
 die(){ printf '[MacOSify][ERROR] %s\n' "$*" >&2; exit 1; }
 
 usage(){ cat <<'USAGE'
-MacOSify 1.2 - Ubuntu GNOME -> macOS Tahoe inspired desktop
+MacOSify 1.3 - Ubuntu GNOME -> macOS Tahoe inspired desktop
 
 Usage: macosify.sh [options]
   --dry-run             Preview changes only
@@ -65,13 +65,11 @@ acquire_lock(){
 
 check_platform(){
   [[ -r /etc/os-release ]] || die "Cannot identify Linux distribution."
-  # shellcheck disable=SC1091
   source /etc/os-release
   [[ "${ID:-}" == ubuntu || "${ID_LIKE:-}" == *ubuntu* ]] || die "Ubuntu-based system required: ${PRETTY_NAME:-unknown}"
   command -v gnome-shell >/dev/null || die "GNOME Shell is required."
   local gv="$(gnome-shell --version | awk '{print $3}')"
   info "Detected ${PRETTY_NAME:-Ubuntu} | GNOME $gv | session ${XDG_SESSION_TYPE:-unknown}"
-  [[ "${VERSION_ID:-}" == 26.04* ]] && info "Ubuntu 26.04 detected; GNOME 50/Wayland-safe profile enabled."
 }
 
 check_resources(){
@@ -120,7 +118,6 @@ sync_sources(){
   info "Fetching current Tahoe components"
   sync_repo MacTahoe-gtk-theme https://github.com/vinceliuice/MacTahoe-gtk-theme.git
   sync_repo MacTahoe-icon-theme https://github.com/vinceliuice/MacTahoe-icon-theme.git
-  sync_repo dash-to-dock https://github.com/micheleg/dash-to-dock.git
   sync_repo blur-my-shell https://github.com/aunetx/blur-my-shell.git
   sync_repo gnome-shell-extension-appindicator https://github.com/ubuntu/gnome-shell-extension-appindicator.git
 }
@@ -306,20 +303,77 @@ configure_dash2dock(){
     gsettings set "$s" intellihide true 2>/dev/null || true
     gsettings set "$s" icon-size 48 2>/dev/null || true
   fi
-  if gsettings list-schemas | grep -q '^org.gnome.shell.extensions.dash-to-dock$'; then
-    local s=org.gnome.shell.extensions.dash-to-dock
-    gsettings set "$s" dock-position 'BOTTOM' 2>/dev/null || true
-    gsettings set "$s" dock-fixed false 2>/dev/null || true
-    gsettings set "$s" autohide true 2>/dev/null || true
-    gsettings set "$s" intellihide true 2>/dev/null || true
-    gsettings set "$s" animate-show-apps true 2>/dev/null || true
-    gsettings set "$s" animation-time 0.22 2>/dev/null || true
-    gsettings set "$s" show-mounts false 2>/dev/null || true
+}
+
+configure_top_panel(){
+  info "Configuring macOS-style auto-hide top panel"
+  local uuid='panel-scroll@aunetx'
+  local candidates=(
+    'https://extensions.gnome.org/extension-info/?uuid=hide-top-bar@mathieu.bidon.ca&shell_version=50'
+  )
+  local api url zip
+  # Hide Top Bar is optional; prefer it when GNOME 50 publishes a compatible build.
+  api="https://extensions.gnome.org/extension-info/?uuid=hidetopbar@mathieu.bidon.ca&shell_version=50"
+  if url="$(curl -fsSL --retry 2 --connect-timeout 10 "$api" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("download_url",""))' 2>/dev/null)" && [[ -n "$url" ]]; then
+    zip="$STATE_DIR/hide-top-bar.zip"
+    curl -fL --retry 2 --connect-timeout 10 -o "$zip" "https://extensions.gnome.org${url}"
+    gnome-extensions install --force "$zip" || true
+    rm -f "$zip"
+  fi
+  for id in hidetopbar@mathieu.bidon.ca hide-top-bar@mathieu.bidon.ca; do
+    gnome-extensions enable "$id" 2>/dev/null || true
+    persist_enabled_extension "$id"
+  done
+  # Fallback/compatibility: configure the classic Hide Top Bar schema if present.
+  for schema in org.gnome.shell.extensions.hidetopbar org.gnome.shell.extensions.hide-top-bar; do
+    if gsettings list-schemas | grep -q "^$schema$"; then
+      gsettings set "$schema" enable-intellihide true 2>/dev/null || true
+      gsettings set "$schema" mouse-sensitive true 2>/dev/null || true
+      gsettings set "$schema" mouse-sensitive-area 3 2>/dev/null || true
+      gsettings set "$schema" animation-time-autohide 0.2 2>/dev/null || true
+      gsettings set "$schema" animation-time-show 0.2 2>/dev/null || true
+    fi
+  done
+}
+
+configure_dock_layout(){
+  info "Configuring macOS dock layout"
+  local uuid='dash2dock-lite@icedman.github.com'
+  # Dash2Dock preferences vary by release. Configure known GSettings keys when available.
+  if gsettings list-schemas | grep -q '^org.gnome.shell.extensions.dash2dock-lite$'; then
+    local s=org.gnome.shell.extensions.dash2dock-lite
+    for keyval in \
+      "dock-position BOTTOM" \
+      "autohide true" \
+      "intellihide true" \
+      "icon-size 48"; do
+      # shellcheck disable=SC2086
+      gsettings set "$s" ${keyval} 2>/dev/null || true
+    done
+  fi
+  # Ubuntu's app favorites are the authoritative launcher ordering for GNOME/Dash-based docks.
+  local launcher='org.gnome.shell favorite-apps'
+  local current
+  current="$(gsettings get $launcher 2>/dev/null || echo '@as []')"
+  python3 - <<'PY3'
+import ast, subprocess
+schema='org.gnome.shell'; key='favorite-apps'
+try:
+    raw=subprocess.check_output(['gsettings','get',schema,key], text=True).strip()
+    apps=ast.literal_eval(raw)
+except Exception:
+    apps=[]
+# Keep existing user favorites, remove duplicates, and make Files the first launcher.
+apps=[x for x in apps if isinstance(x,str)]
+apps=[x for i,x in enumerate(apps) if x not in apps[:i]]
+files='org.gnome.Nautilus.desktop'
+apps=[files]+[x for x in apps if x != files]
+# Trash is handled as a fixed terminal dock item when Dash2Dock supports it.
+subprocess.run(['gsettings','set',schema,key,str(apps)], check=False)
+PY3
+  if gsettings list-schemas | grep -q '^org.gnome.shell.extensions.dash2dock-lite$'; then
+    local s=org.gnome.shell.extensions.dash2dock-lite
     gsettings set "$s" show-trash true 2>/dev/null || true
-    gsettings set "$s" extend-height false 2>/dev/null || true
-    gsettings set "$s" always-center-icons true 2>/dev/null || true
-    gsettings set "$s" custom-theme-shrink true 2>/dev/null || true
-    gsettings set "$s" background-opacity 0.72 2>/dev/null || true
   fi
 }
 
@@ -339,6 +393,9 @@ configure_tahoe_shell(){
   gsettings set org.gnome.desktop.wm.preferences action-double-click-titlebar 'toggle-maximize' 2>/dev/null || true
   gsettings set org.gnome.desktop.wm.preferences action-middle-click-titlebar 'none' 2>/dev/null || true
   gsettings set org.gnome.desktop.wm.preferences action-right-click-titlebar 'menu' 2>/dev/null || true
+  configure_top_panel
+  configure_dash2dock
+  configure_dock_layout
 }
 
 configure_extensions(){
@@ -346,7 +403,6 @@ configure_extensions(){
   for id in blur-my-shell@aunetx appindicatorsupport@rgcjonas.gmail.com; do
     gnome-extensions enable "$id" 2>/dev/null || warn "Extension unavailable: $id"
   done
-  configure_dash2dock
   configure_tahoe_shell
 }
 
@@ -380,7 +436,7 @@ verify(){
   info "Cursor: $(gsettings get org.gnome.desktop.interface cursor-theme 2>/dev/null || echo unknown)"
   ((failures==0)) || die "Verification found $failures critical issue(s). See $LOG_FILE"
   info "Verification passed."
-  info "A logout/login or reboot is required once to activate the newly installed GNOME Shell extension."
+  info "A logout/login or reboot is required once to activate newly installed GNOME Shell extensions."
 }
 
 rollback(){
@@ -400,6 +456,8 @@ uninstall(){
   gnome-extensions disable dash2dock-lite@icedman.github.com 2>/dev/null || true
   gnome-extensions disable blur-my-shell@aunetx 2>/dev/null || true
   gnome-extensions disable appindicatorsupport@rgcjonas.gmail.com 2>/dev/null || true
+  gnome-extensions disable hidetopbar@mathieu.bidon.ca 2>/dev/null || true
+  gnome-extensions disable hide-top-bar@mathieu.bidon.ca 2>/dev/null || true
   gnome-extensions enable ubuntu-dock@ubuntu.com 2>/dev/null || true
   sudo ln -sfn /usr/share/plymouth/themes/ubuntu-text/ubuntu-text.plymouth /etc/alternatives/default.plymouth 2>/dev/null || sudo ln -sfn /usr/share/plymouth/themes/ubuntu-logo/ubuntu-logo.plymouth /etc/alternatives/default.plymouth 2>/dev/null || true
   sudo update-initramfs -u || true
@@ -415,7 +473,8 @@ doctor(){
   echo "Theme: $(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo unknown)"
   echo "Icons: $(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null || echo unknown)"
   echo "Plymouth: $(readlink -f /etc/alternatives/default.plymouth 2>/dev/null || echo unknown)"
-  gnome-extensions list | grep -E 'dash2dock|blur-my-shell|appindicatorsupport' || true
+  echo "Favorites: $(gsettings get org.gnome.shell favorite-apps 2>/dev/null || echo unknown)"
+  gnome-extensions list 2>/dev/null | grep -E 'dash2dock|hide.?top.?bar|blur-my-shell|appindicatorsupport' || true
 }
 
 main(){

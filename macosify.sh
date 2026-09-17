@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 PROJECT="MacOSify"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/macosify"
 SOURCE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/macosify/sources"
@@ -23,7 +23,7 @@ warn(){ printf '[MacOSify][WARN] %s\n' "$*" >&2; }
 die(){ printf '[MacOSify][ERROR] %s\n' "$*" >&2; exit 1; }
 
 usage(){ cat <<'USAGE'
-MacOSify 1.0 - Ubuntu GNOME -> macOS Tahoe inspired desktop
+MacOSify 1.1 - Ubuntu GNOME -> macOS Tahoe inspired desktop
 
 Usage: macosify.sh [options]
   --dry-run             Preview changes only
@@ -65,7 +65,6 @@ acquire_lock(){
 
 check_platform(){
   [[ -r /etc/os-release ]] || die "Cannot identify Linux distribution."
-  # shellcheck disable=SC1091
   source /etc/os-release
   [[ "${ID:-}" == ubuntu || "${ID_LIKE:-}" == *ubuntu* ]] || die "Ubuntu-based system required: ${PRETTY_NAME:-unknown}"
   command -v gnome-shell >/dev/null || die "GNOME Shell is required."
@@ -100,7 +99,7 @@ backup(){
 }
 
 install_deps(){
-  local packages=(git curl ca-certificates wget unzip rsync imagemagick plymouth plymouth-themes dconf-cli gsettings-desktop-schemas gnome-shell-extension-prefs sassc meson ninja-build gettext build-essential libglib2.0-dev libxml2-utils)
+  local packages=(git curl ca-certificates wget unzip rsync imagemagick plymouth plymouth-themes dconf-cli gsettings-desktop-schemas gnome-shell-extension-prefs sassc meson ninja-build gettext build-essential libglib2.0-dev libxml2-utils python3)
   info "Checking/installing required dependencies"
   sudo apt-get update
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
@@ -136,12 +135,17 @@ install_tahoe(){
 }
 
 install_dash2dock_animated(){
-  local zip="$STATE_DIR/dash2dock-animated-v92.zip"
-  local url="https://extensions.gnome.org/extension-data/dash2dock-liteicedman.v92.shell-extension.zip"
-  info "Installing Dash2Dock Animated v92 (GNOME 50 compatible)"
-  curl -fL --retry 3 --connect-timeout 15 -o "$zip" "$url"
+  local zip="$STATE_DIR/dash2dock-animated.zip"
+  local api="https://extensions.gnome.org/extension-info/?pk=4994&shell_version=50"
+  local base="https://extensions.gnome.org"
+  local url
+  info "Installing Dash2Dock Animated from GNOME Extensions (GNOME 50)"
+  url="$(curl -fsSL --retry 3 --connect-timeout 15 "$api" | python3 -c 'import json,sys; print(json.load(sys.stdin)["download_url"])')"
+  [[ -n "$url" ]] || return 1
+  curl -fL --retry 3 --connect-timeout 15 -o "$zip" "$base$url"
   gnome-extensions install --force "$zip"
   rm -f "$zip"
+  info "Dash2Dock Animated installed: dash2dock-lite@icedman.github.com"
 }
 
 install_blur(){
@@ -209,7 +213,7 @@ SCRIPT
   sudo mkdir -p /usr/share/plymouth/themes/macosify-tahoe
   sudo cp "$dir/macosify-tahoe.plymouth" "$dir/macosify-tahoe.script" /usr/share/plymouth/themes/macosify-tahoe/
   sudo cp /usr/share/pixmaps/macosify-logo.png /usr/share/plymouth/themes/macosify-tahoe/macosify-logo.png
-  sudo plymouth-set-default-theme -R macosify-tahoe
+  sudo ln -sfn /usr/share/plymouth/themes/macosify-tahoe/macosify-tahoe.plymouth /etc/alternatives/default.plymouth
   sudo update-initramfs -u
 }
 
@@ -275,8 +279,8 @@ configure_user(){
 }
 
 configure_dash2dock(){
-  local uuid='dash2dock-lite@icedman'
-  gnome-extensions enable "$uuid" 2>/dev/null || gnome-extensions enable 'dash2dock-animated@icedman' 2>/dev/null || true
+  local uuid='dash2dock-lite@icedman.github.com'
+  gnome-extensions enable "$uuid" 2>/dev/null || true
   if gsettings list-schemas | grep -q '^org.gnome.shell.extensions.dash2dock-lite$'; then
     local s=org.gnome.shell.extensions.dash2dock-lite
     gsettings set "$s" dock-position 'BOTTOM' 2>/dev/null || true
@@ -302,7 +306,21 @@ configure_dash2dock(){
 }
 
 configure_performance(){
-  gsettings set org.gnome.desktop.interface enable-animations true 2>/dev/null || true
+  case "$PERFORMANCE" in
+    lite) gsettings set org.gnome.desktop.interface enable-animations false 2>/dev/null || true ;;
+    balanced|high) gsettings set org.gnome.desktop.interface enable-animations true 2>/dev/null || true ;;
+  esac
+}
+
+configure_tahoe_shell(){
+  info "Applying Tahoe shell/panel/window tweaks"
+  gsettings set org.gnome.desktop.wm.preferences button-layout 'close,minimize,maximize:' 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface show-battery-percentage true 2>/dev/null || true
+  gsettings set org.gnome.desktop.interface enable-hot-corners false 2>/dev/null || true
+  gsettings set org.gnome.mutter center-new-windows true 2>/dev/null || true
+  gsettings set org.gnome.desktop.wm.preferences action-double-click-titlebar 'toggle-maximize' 2>/dev/null || true
+  gsettings set org.gnome.desktop.wm.preferences action-middle-click-titlebar 'none' 2>/dev/null || true
+  gsettings set org.gnome.desktop.wm.preferences action-right-click-titlebar 'menu' 2>/dev/null || true
 }
 
 configure_extensions(){
@@ -311,16 +329,18 @@ configure_extensions(){
     gnome-extensions enable "$id" 2>/dev/null || warn "Extension unavailable: $id"
   done
   configure_dash2dock
+  configure_tahoe_shell
 }
 
 verify(){
   info "Running verification"
   local failures=0
-  command -v gsettings >/dev/null || { warn 'gsettings missing'; failures=$((failures+1)); }
-  command -v gnome-extensions >/dev/null || { warn 'gnome-extensions missing'; failures=$((failures+1)); }
-  gnome-extensions info dash2dock-lite@icedman >/dev/null 2>&1 || warn 'Dash2Dock Animated may require logout/login before metadata is visible.'
-  [[ -f /usr/share/plymouth/themes/macosify-tahoe/macosify-tahoe.plymouth ]] || { warn 'Plymouth theme missing'; failures=$((failures+1)); }
-  [[ -f /usr/share/backgrounds/macosify-tahoe-dark.jpeg ]] || { warn 'Wallpaper missing'; failures=$((failures+1)); }
+  command -v gsettings >/dev/null || { warn "gsettings missing"; failures=$((failures+1)); }
+  command -v gnome-extensions >/dev/null || { warn "gnome-extensions missing"; failures=$((failures+1)); }
+  gnome-extensions info dash2dock-lite@icedman.github.com >/dev/null 2>&1 || { warn "Dash2Dock Animated not installed"; failures=$((failures+1)); }
+  [[ -f /usr/share/plymouth/themes/macosify-tahoe/macosify-tahoe.plymouth ]] || { warn "Plymouth theme missing"; failures=$((failures+1)); }
+  [[ -f /usr/share/backgrounds/macosify-tahoe-dark.jpeg ]] || { warn "Wallpaper missing"; failures=$((failures+1)); }
+  [[ -f /etc/dconf/db/gdm.d/00-macosify ]] || { warn "GDM configuration missing"; failures=$((failures+1)); }
   info "GTK: $(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo unknown)"
   info "Icons: $(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null || echo unknown)"
   info "Cursor: $(gsettings get org.gnome.desktop.interface cursor-theme 2>/dev/null || echo unknown)"
@@ -342,11 +362,12 @@ rollback(){
 
 uninstall(){
   rollback
-  gnome-extensions disable dash2dock-lite@icedman 2>/dev/null || true
+  gnome-extensions disable dash2dock-lite@icedman.github.com 2>/dev/null || true
   gnome-extensions disable blur-my-shell@aunetx 2>/dev/null || true
   gnome-extensions disable appindicatorsupport@rgcjonas.gmail.com 2>/dev/null || true
   gnome-extensions enable ubuntu-dock@ubuntu.com 2>/dev/null || true
-  sudo plymouth-set-default-theme -R ubuntu-text 2>/dev/null || sudo plymouth-set-default-theme -R ubuntu-logo 2>/dev/null || true
+  sudo rm -f /etc/alternatives/default.plymouth
+  sudo update-initramfs -u || true
   info 'MacOSify configuration removed/restored. Reboot recommended.'
 }
 
@@ -358,7 +379,7 @@ doctor(){
   echo "Session: ${XDG_SESSION_TYPE:-unknown}"
   echo "Theme: $(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo unknown)"
   echo "Icons: $(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null || echo unknown)"
-  echo "Plymouth: $(plymouth-set-default-theme 2>/dev/null || echo unknown)"
+  echo "Plymouth: $(readlink -f /etc/alternatives/default.plymouth 2>/dev/null || echo unknown)"
   gnome-extensions list | grep -E 'dash2dock|blur-my-shell|appindicatorsupport' || true
 }
 
@@ -374,18 +395,18 @@ main(){
   backup
   install_deps
   sync_sources
-  install_tahoe
-  install_dash2dock_animated
-  install_blur
-  install_appindicator
-  make_wallpaper
-  make_logo
-  install_plymouth
-  configure_grub
-  configure_gdm
-  configure_user
-  configure_extensions
-  configure_performance
+  install_tahoe || warn "MacTahoe theme stage failed; continuing with remaining stages."
+  if ! install_dash2dock_animated; then warn "Dash2Dock Animated installation failed; continuing with remaining stages."; fi
+  install_blur || warn "Blur My Shell stage failed; continuing."
+  install_appindicator || warn "AppIndicator stage failed; continuing."
+  make_wallpaper || warn "Wallpaper stage failed; continuing."
+  make_logo || warn "Logo stage failed; continuing."
+  install_plymouth || warn "Plymouth stage failed; continuing."
+  configure_grub || warn "GRUB stage failed; continuing."
+  configure_gdm || warn "GDM stage failed; continuing."
+  configure_user || warn "User settings stage failed; continuing."
+  configure_extensions || warn "Extension configuration stage failed; continuing."
+  configure_performance || warn "Performance stage failed; continuing."
   verify
   info "$PROJECT $VERSION completed. Log: $LOG_FILE"
   info "Log out and back in (or reboot) to activate GNOME Shell/GDM changes."

@@ -42,3 +42,6 @@ fi
 if [[ -f "$TMP/MacOSify/macosify-boot-theme.sh" ]]; then
   bash "$TMP/MacOSify/macosify-boot-theme.sh"
 fi
+if [[ -f "$TMP/MacOSify/macosify-gnome50-fix.sh" ]]; then
+  bash "$TMP/MacOSify/macosify-gnome50-fix.sh"
+fi

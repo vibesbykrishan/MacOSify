@@ -34,3 +34,6 @@ bash "$TMP/MacOSify/macosify.sh" "$@"
 if [[ -f "$TMP/MacOSify/macosify-enhance.sh" ]]; then
   bash "$TMP/MacOSify/macosify-enhance.sh"
 fi
+if [[ -f "$TMP/MacOSify/macosify-finalize.sh" ]]; then
+  bash "$TMP/MacOSify/macosify-finalize.sh"
+fi

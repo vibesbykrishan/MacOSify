@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 PROJECT="MacOSify"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/macosify"
 SOURCE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/macosify/sources"
@@ -23,7 +23,7 @@ warn(){ printf '[MacOSify][WARN] %s\n' "$*" >&2; }
 die(){ printf '[MacOSify][ERROR] %s\n' "$*" >&2; exit 1; }
 
 usage(){ cat <<'USAGE'
-MacOSify 1.1 - Ubuntu GNOME -> macOS Tahoe inspired desktop
+MacOSify 1.2 - Ubuntu GNOME -> macOS Tahoe inspired desktop
 
 Usage: macosify.sh [options]
   --dry-run             Preview changes only
@@ -65,6 +65,7 @@ acquire_lock(){
 
 check_platform(){
   [[ -r /etc/os-release ]] || die "Cannot identify Linux distribution."
+  # shellcheck disable=SC1091
   source /etc/os-release
   [[ "${ID:-}" == ubuntu || "${ID_LIKE:-}" == *ubuntu* ]] || die "Ubuntu-based system required: ${PRETTY_NAME:-unknown}"
   command -v gnome-shell >/dev/null || die "GNOME Shell is required."
@@ -278,9 +279,26 @@ configure_user(){
   gnome-extensions disable ubuntu-appindicators@ubuntu.com 2>/dev/null || true
 }
 
+persist_enabled_extension(){
+  local uuid="$1"
+  python3 - "$uuid" <<'PY2'
+import ast, subprocess, sys
+uuid=sys.argv[1]
+try:
+    raw=subprocess.check_output(["gsettings","get","org.gnome.shell","enabled-extensions"], text=True).strip()
+    items=ast.literal_eval(raw)
+    if uuid not in items:
+        items.append(uuid)
+    subprocess.run(["gsettings","set","org.gnome.shell","enabled-extensions",str(items)], check=False)
+except Exception:
+    pass
+PY2
+}
+
 configure_dash2dock(){
   local uuid='dash2dock-lite@icedman.github.com'
   gnome-extensions enable "$uuid" 2>/dev/null || true
+  persist_enabled_extension "$uuid"
   if gsettings list-schemas | grep -q '^org.gnome.shell.extensions.dash2dock-lite$'; then
     local s=org.gnome.shell.extensions.dash2dock-lite
     gsettings set "$s" dock-position 'BOTTOM' 2>/dev/null || true
@@ -335,17 +353,34 @@ configure_extensions(){
 verify(){
   info "Running verification"
   local failures=0
+  local d2d="$HOME/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com"
   command -v gsettings >/dev/null || { warn "gsettings missing"; failures=$((failures+1)); }
   command -v gnome-extensions >/dev/null || { warn "gnome-extensions missing"; failures=$((failures+1)); }
-  gnome-extensions info dash2dock-lite@icedman.github.com >/dev/null 2>&1 || { warn "Dash2Dock Animated not installed"; failures=$((failures+1)); }
+  if [[ -f "$d2d/metadata.json" ]] && grep -q '"uuid": "dash2dock-lite@icedman.github.com"' "$d2d/metadata.json"; then
+    info "Dash2Dock Animated: installed (filesystem)"
+  else
+    warn "Dash2Dock Animated files missing"; failures=$((failures+1))
+  fi
+  if gsettings get org.gnome.shell enabled-extensions 2>/dev/null | grep -q "dash2dock-lite@icedman.github.com"; then
+    info "Dash2Dock Animated: enabled/persisted for next GNOME Shell session"
+  else
+    warn "Dash2Dock Animated is not persisted as enabled"; failures=$((failures+1))
+  fi
   [[ -f /usr/share/plymouth/themes/macosify-tahoe/macosify-tahoe.plymouth ]] || { warn "Plymouth theme missing"; failures=$((failures+1)); }
+  [[ "$(readlink -f /etc/alternatives/default.plymouth 2>/dev/null || true)" == "/usr/share/plymouth/themes/macosify-tahoe/macosify-tahoe.plymouth" ]] || { warn "MacOSify Plymouth is not the active default"; failures=$((failures+1)); }
   [[ -f /usr/share/backgrounds/macosify-tahoe-dark.jpeg ]] || { warn "Wallpaper missing"; failures=$((failures+1)); }
   [[ -f /etc/dconf/db/gdm.d/00-macosify ]] || { warn "GDM configuration missing"; failures=$((failures+1)); }
+  if gsettings get org.gnome.shell enabled-extensions 2>/dev/null | grep -q "ubuntu-dock@ubuntu.com"; then
+    warn "Ubuntu Dock is still enabled"; failures=$((failures+1))
+  else
+    info "Ubuntu Dock: disabled"
+  fi
   info "GTK: $(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo unknown)"
   info "Icons: $(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null || echo unknown)"
   info "Cursor: $(gsettings get org.gnome.desktop.interface cursor-theme 2>/dev/null || echo unknown)"
   ((failures==0)) || die "Verification found $failures critical issue(s). See $LOG_FILE"
   info "Verification passed."
+  info "A logout/login or reboot is required once to activate the newly installed GNOME Shell extension."
 }
 
 rollback(){
@@ -366,7 +401,7 @@ uninstall(){
   gnome-extensions disable blur-my-shell@aunetx 2>/dev/null || true
   gnome-extensions disable appindicatorsupport@rgcjonas.gmail.com 2>/dev/null || true
   gnome-extensions enable ubuntu-dock@ubuntu.com 2>/dev/null || true
-  sudo rm -f /etc/alternatives/default.plymouth
+  sudo ln -sfn /usr/share/plymouth/themes/ubuntu-text/ubuntu-text.plymouth /etc/alternatives/default.plymouth 2>/dev/null || sudo ln -sfn /usr/share/plymouth/themes/ubuntu-logo/ubuntu-logo.plymouth /etc/alternatives/default.plymouth 2>/dev/null || true
   sudo update-initramfs -u || true
   info 'MacOSify configuration removed/restored. Reboot recommended.'
 }

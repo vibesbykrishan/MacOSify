@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 PROJECT="MacOSify"
-VERSION="1.6.0"
+MACOSIFY_VERSION="1.6.0"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/macosify"
 SOURCE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/macosify/sources"
 mkdir -p "$STATE_DIR" "$SOURCE_DIR"
@@ -66,7 +66,6 @@ install_appmenu(){
   fi
   bash "$app_dir/install.sh" --clean-stale
   persist 'appmenu@ChathurangaBW.github.io'
-  # Use the installed/compiled schema, not the source tree's uncompiled XML.
   local schema="$HOME/.local/share/gnome-shell/extensions/appmenu@ChathurangaBW.github.io/schemas"
   set_schema "$schema" org.gnome.shell.extensions.appmenu show-os-icon true
   set_schema "$schema" org.gnome.shell.extensions.appmenu use-real-menus true
@@ -140,7 +139,7 @@ configure_machine(){
   esac
 
   cat > "$STATE_DIR/machine-profile.conf" <<EOF
-MACOSIFY_VERSION=$VERSION
+MACOSIFY_VERSION=$MACOSIFY_VERSION
 OS=${PRETTY_NAME:-unknown}
 KERNEL=$(uname -r)
 ARCH=$(uname -m)
@@ -189,7 +188,7 @@ verify(){
 }
 
 main(){
-  info "$PROJECT enhancement $VERSION — GNOME 50/Tahoe compatibility layer"
+  info "$PROJECT enhancement $MACOSIFY_VERSION — GNOME 50/Tahoe compatibility layer"
   info 'Ubuntu 26.04 ships GNOME 50; MacOSify targets the GNOME 50 extension APIs.'
   configure_machine
   install_appmenu || warn 'AppMenu stage failed.'

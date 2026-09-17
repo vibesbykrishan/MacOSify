@@ -11,7 +11,6 @@ mkdir -p "$STATE_DIR" "$SOURCE_DIR"
 info(){ printf '[MacOSify] %s\n' "$*"; }
 warn(){ printf '[MacOSify][WARN] %s\n' "$*" >&2; }
 
-# Desktop Commander/SSH may not export the GNOME user D-Bus session bus.
 if [[ -S "/run/user/$(id -u)/bus" ]]; then
   export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
 fi
@@ -44,7 +43,10 @@ set_schema(){
 }
 
 install_ego(){
-  local uuid="$1" shell="${2:-50}" zip="$STATE_DIR/${uuid}.zip" url
+  local uuid="$1"
+  local shell="${2:-50}"
+  local zip="$STATE_DIR/${uuid}.zip"
+  local url
   url="$(curl -fsSL --retry 3 --connect-timeout 15 "https://extensions.gnome.org/extension-info/?uuid=${uuid}&shell_version=${shell}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("download_url",""))')" || return 1
   [[ -n "$url" ]] || return 1
   curl -fL --retry 3 --connect-timeout 15 -o "$zip" "https://extensions.gnome.org${url}"
@@ -98,14 +100,12 @@ configure_dash2dock(){
   local schema="$HOME/.local/share/gnome-shell/extensions/dash2dock-lite@icedman.github.com/schemas"
   [[ -d "$schema" ]] || { warn 'Dash2Dock schema directory not found.'; return; }
   persist 'dash2dock-lite@icedman.github.com'
-  # GNOME 50 stable v92 uses these names; do not use the older autohide/intellihide keys.
   set_schema "$schema" org.gnome.shell.extensions.dash2dock-lite apps-icon true
   set_schema "$schema" org.gnome.shell.extensions.dash2dock-lite apps-icon-front true
   set_schema "$schema" org.gnome.shell.extensions.dash2dock-lite trash-icon true
   set_schema "$schema" org.gnome.shell.extensions.dash2dock-lite autohide-dash true
   set_schema "$schema" org.gnome.shell.extensions.dash2dock-lite autohide-dodge true
   set_schema "$schema" org.gnome.shell.extensions.dash2dock-lite icon-size 48
-  set_schema "$schema" org.gnome.shell.extensions.dash2dock-lite dock-location 0
 }
 
 configure_control_center(){
@@ -132,20 +132,11 @@ configure_machine(){
   fi
 
   case "$profile" in
-    lite)
-      gsettings set org.gnome.desktop.interface enable-animations false 2>/dev/null || true
-      gsettings set org.gnome.desktop.interface enable-hot-corners false 2>/dev/null || true
-      ;;
-    balanced)
-      gsettings set org.gnome.desktop.interface enable-animations true 2>/dev/null || true
-      ;;
-    high)
-      gsettings set org.gnome.desktop.interface enable-animations true 2>/dev/null || true
-      ;;
+    lite) gsettings set org.gnome.desktop.interface enable-animations false 2>/dev/null || true ;;
+    balanced|high) gsettings set org.gnome.desktop.interface enable-animations true 2>/dev/null || true ;;
     *) profile="balanced" ;;
   esac
 
-  # Persist a machine profile so support/diagnostics can reproduce the configuration.
   cat > "$STATE_DIR/machine-profile.conf" <<EOF
 MACOSIFY_VERSION=$VERSION
 OS=${PRETTY_NAME:-unknown}
@@ -172,7 +163,6 @@ verify(){
   [[ -f "$HOME/.local/share/gnome-shell/extensions/appmenu@ChathurangaBW.github.io/metadata.json" ]] || { warn 'AppMenu files missing'; failures=$((failures+1)); }
   [[ -f "$HOME/.local/share/gnome-shell/extensions/hidetopbar@mathieu.bidon.ca/metadata.json" ]] || { warn 'Hide Top Bar files missing'; failures=$((failures+1)); }
   [[ -f "$HOME/.local/share/gnome-shell/extensions/kiwi@kemma/metadata.json" ]] || { warn 'Kiwi files missing'; failures=$((failures+1)); }
-  [[ -f "$HOME/.local/share/gnome/shell/extensions/user-theme@gnome-shell-extensions.gcampax.github.com/metadata.json" || -f "$HOME/.local/share/gnome-shell/extensions/user-theme@gnome-shell-extensions.gcampax.github.com/metadata.json" ]] || warn 'User Themes metadata path not found; continuing.'
 
   local enabled
   enabled="$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null || true)"
@@ -199,7 +189,6 @@ verify(){
 main(){
   info "$PROJECT enhancement $VERSION — GNOME 50/Tahoe compatibility layer"
   info 'Ubuntu 26.04 ships GNOME 50; MacOSify targets the GNOME 50 extension APIs.'
-
   configure_machine
   install_appmenu || warn 'AppMenu stage failed.'
   configure_control_center
@@ -207,11 +196,9 @@ main(){
   configure_topbar
   configure_dash2dock
   gnome-extensions disable ubuntu-dock@ubuntu.com 2>/dev/null || true
-
   if ! verify; then
     warn 'Some extension checks need a fresh GNOME session; persisted configuration was still written.'
   fi
-
   info '=== MACHINE CONFIGURATION ==='
   [[ -f "$STATE_DIR/machine-profile.conf" ]] && cat "$STATE_DIR/machine-profile.conf"
   info '=== END MACHINE CONFIGURATION ==='

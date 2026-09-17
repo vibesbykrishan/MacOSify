@@ -30,4 +30,7 @@ fi
 
 echo '[MacOSify] Downloading the latest installer...'
 git clone --depth=1 "$REPO" "$TMP/MacOSify" >/dev/null 2>&1
-exec bash "$TMP/MacOSify/macosify.sh" "$@"
+bash "$TMP/MacOSify/macosify.sh" "$@"
+if [[ -f "$TMP/MacOSify/macosify-enhance.sh" ]]; then
+  bash "$TMP/MacOSify/macosify-enhance.sh"
+fi

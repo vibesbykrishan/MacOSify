@@ -134,8 +134,9 @@ menu(){
 case "${1:---gui}" in
   --gui|gui|change) gui ;;
   list|--list) list_themes ;;
-  light) apply_theme MacTahoe-Light ;;
-  dark) apply_theme MacTahoe-Dark ;;
+  light|macos-light) apply_theme MacTahoe-Light ;;
+  dark|macos-dark) apply_theme MacTahoe-Dark ;;
+  blue|macos-light-blue) apply_theme MacTahoe-Light-blue ;;
   set) [[ -n "${2:-}" ]] || { echo 'Usage: macosify-theme set THEME'; exit 2; }; apply_theme "$2" ;;
-  *) echo 'Usage: macosify-theme [change|gui|list|light|dark|set THEME]'; exit 2 ;;
+  *) echo 'Usage: theme change | theme list | macos light | macos dark | macos light blue'; exit 2 ;;
 esac

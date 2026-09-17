@@ -94,6 +94,11 @@ CSS
 install_theme_center(){
   [[ -f "$THEME_SCRIPT" ]] || return 0
   install -m 0755 "$THEME_SCRIPT" "$HOME/.local/bin/macosify-theme"
+  cat >"$HOME/.local/bin/theme" <<'EOF'
+#!/usr/bin/env bash
+exec "$HOME/.local/bin/macosify-theme" "${1:-change}" "${@:2}"
+EOF
+  chmod 0755 "$HOME/.local/bin/theme"
   cat >"$HOME/.local/share/applications/MacOSify-Theme-Center.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -101,7 +106,7 @@ Name=MacOSify Theme Center
 Comment=Switch MacTahoe Light, Dark and accent themes
 Icon=preferences-desktop-theme
 Terminal=true
-Exec=$HOME/.local/bin/macosify-theme --gui
+Exec=$HOME/.local/bin/theme change
 Categories=Settings;DesktopSettings;
 StartupNotify=true
 EOF
@@ -160,8 +165,8 @@ verify(){
   echo "COLOR=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null || true)"
   echo "WINDOW=$(gsettings get org.gnome.desktop.wm.preferences button-layout 2>/dev/null || true)"
   echo "PLYMOUTH=$(readlink -f /etc/alternatives/default.plymouth 2>/dev/null || true)"
-  echo "THEME_CENTER=$HOME/.local/bin/macosify-theme"
-  [[ -x "$HOME/.local/bin/macosify-theme" ]] && echo 'THEME_SWITCHER=OK'
+  echo "THEME_CENTER=$HOME/.local/bin/theme change"
+  [[ -x "$HOME/.local/bin/theme" ]] && echo 'THEME_SWITCHER=OK'
 }
 
 install_theme_center

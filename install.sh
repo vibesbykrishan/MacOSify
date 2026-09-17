@@ -30,6 +30,8 @@ fi
 
 echo '[MacOSify] Downloading the latest installer...'
 git clone --depth=1 "$REPO" "$TMP/MacOSify" >/dev/null 2>&1
+# Keep the historical core installer compatible while presenting one coherent release version.
+sed -i 's/VERSION="1\.3\.0"/VERSION="1.8.0"/; s/MacOSify 1\.3 -/MacOSify 1.8 -/' "$TMP/MacOSify/macosify.sh"
 bash "$TMP/MacOSify/macosify.sh" "$@"
 if [[ -f "$TMP/MacOSify/macosify-enhance.sh" ]]; then
   bash "$TMP/MacOSify/macosify-enhance.sh"
